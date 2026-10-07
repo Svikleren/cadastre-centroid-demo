@@ -29,6 +29,10 @@ dependencies {
 application { mainClass = 'lv.cadastre.demo.CadastreApplication' }
 test {
     useJUnitPlatform()
-    systemProperty 'cadastre.test.root', System.getProperty('cadastre.test.root', 'sample-data/ExportCadGroup_0100126')
+    systemProperty 'cadastre.test.root',
+            System.getProperty(
+                    'cadastre.test.root',
+                    'sample-data'
+            )
     testLogging { events 'passed', 'skipped', 'failed' }
 }
