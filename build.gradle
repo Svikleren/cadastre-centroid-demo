@@ -1,0 +1,34 @@
+plugins {
+    id 'application'
+}
+
+repositories {
+    mavenCentral()
+    maven { url = uri('https://repo.osgeo.org/repository/release/') }
+}
+
+java { toolchain { languageVersion = JavaLanguageVersion.of(21) } }
+
+sourceSets {
+    main { java.setSrcDirs(['sources']) }
+    test { java.setSrcDirs(['tests']) }
+}
+
+def geoToolsVersion = '35.1'
+dependencies {
+    implementation "org.geotools:gt-shapefile:${geoToolsVersion}"
+    implementation "org.geotools:gt-referencing:${geoToolsVersion}"
+    runtimeOnly "org.geotools:gt-epsg-hsql:${geoToolsVersion}"
+    implementation 'org.locationtech.jts:jts-core:1.20.0'
+    testImplementation platform('org.junit:junit-bom:5.13.4')
+    implementation platform("tools.jackson:jackson-bom:3.2.3")
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+application { mainClass = 'lv.cadastre.demo.CadastreApplication' }
+test {
+    useJUnitPlatform()
+    systemProperty 'cadastre.test.root', System.getProperty('cadastre.test.root', 'sample-data/ExportCadGroup_0100126')
+    testLogging { events 'passed', 'skipped', 'failed' }
+}
