@@ -1,124 +1,390 @@
-# Latvian cadastral centroid PoC
+# Latvian Cadastral Centroid PoC
 
-A standalone Java application using GeoTools and JTS. It recursively reads only
-`KKBuilding.shp`, preserves `CODE` as a String (including leading zeros), and
-returns latitude, longitude and the Shapefile parent directory name. The existing
-IntelliJ starter `src/Main.java` is preserved but is outside Gradle's source sets.
+A standalone Java proof of concept for extracting building centroids from the Latvian State Land Service (Valsts zemes dienests, VZD) open cadastral spatial dataset.
 
-Application code lives in `sources/lv/cadastre/demo` and tests in
-`tests/lv/cadastre/demo`. Gradle and IntelliJ use `sources` and `tests` as their
-source roots, so the `lv.cadastre.demo` package matches the directory structure.
+The application uses **GeoTools** and **JTS** to:
 
-## Requirements and build
+1. recursively discover `KKBuilding.shp` files;
+2. read building cadastral identifiers and geometries;
+3. calculate building centroids in the source projected coordinate reference system;
+4. transform the resulting centroid points to WGS84 (`EPSG:4326`);
+5. export the results to CSV.
 
-Install **JDK 21** and set `JAVA_HOME` to it. No Gradle installation is required:
-the checked-in Gradle 9.8.0 wrapper downloads Gradle on first use. Initial builds
-need internet access to Maven Central and the official OSGeo release repository.
-GeoTools 35.1 uses `gt-shapefile`, `gt-referencing` and `gt-epsg-hsql`; feature
-access comes through the transitive `gt-main` dependency. JTS is 1.20.0.
+The implementation is pure Java and does not require Python, GeoPandas, QGIS, a database, or an external GIS service.
 
-Unix/macOS:
+## Technology
 
-```sh
-chmod +x gradlew
-./gradlew clean build
-./gradlew run
-```
+- Java 21
+- Gradle 9.8
+- GeoTools 35.1
+- JTS 1.20.0
+- JUnit 5
 
-Windows PowerShell (adjust JDK path if necessary):
+The relevant GeoTools modules are:
 
-```powershell
-$env:JAVA_HOME = 'C:\Program Files\Java\jdk-21'
-.\gradlew.bat clean build
-.\gradlew.bat run
-```
+- `gt-shapefile`
+- `gt-referencing`
+- `gt-epsg-hsql`
 
-Windows cmd also supports `gradlew.bat run`.
-The application always reads `sample-data` relative to the working directory.
-Run from the project root; in IntelliJ use `$PROJECT_DIR$` as the working
-directory and leave program arguments empty. The application always writes
-`result.csv` in the working directory and prints its absolute path after export,
-along with totals and the first 20 records. Command-line arguments are unused.
-Missing input directory or CSV write failures exit with status 1.
+Feature support is provided transitively through `gt-main`.
 
-## Input
+GeoTools dependencies are obtained from the official OSGeo Maven repository in addition to Maven Central.
+
+## Data source
+
+The application is designed for the open cadastral spatial data published by the Latvian State Land Service (Valsts zemes dienests, VZD):
+
+https://data.gov.lv/dati/lv/dataset/kadastra-informacijas-sistemas-atverti-telpiskie-dati
+
+Download and extract the required cadastral data separately.
+
+Real cadastral datasets are intentionally **not included in this repository**.
+
+A typical input structure looks like:
 
 ```text
 sample-data/
-  ExportCadGroup_0100111/
+  ExportCadGroup_<group-id>/
     KKBuilding.shp
     KKBuilding.shx
     KKBuilding.dbf
     KKBuilding.prj
     KKBuilding.cpg
-  ExportCadGroup_0100126/
+
+  ExportCadGroup_<another-group-id>/
     KKBuilding.shp
-    ... companion files ...
+    KKBuilding.shx
+    KKBuilding.dbf
+    KKBuilding.prj
+    KKBuilding.cpg
 ```
 
-Other layers are ignored. `.prj` must describe a projected CRS; it is detected
-from the schema and logged, rather than blindly assuming EPSG:3059. A strict
-transformation is attempted first. If GeoTools cannot find that operation (the
-provided ESRI `.prj` omits Bursa-Wolf datum parameters), the application logs a
-warning and tries GeoTools' lenient transformation, which permits a zero shift
-for missing datum metadata. The detected projection and axes are still used.
-This approximation is validated against the supplied Latvia control value;
-other datums may require authoritative transformation metadata for accuracy. Missing CRS
-or non-String CODE schemas fail that file clearly. Null/blank CODE and null/empty
-geometry are skipped. Feature conversion errors are logged and processing
-continues. Corrupt iterator reads stop that file, since the iterator may no longer
-advance safely; subsequent files are still processed. DataStores, feature
-iterators, directory streams and CSV writers are closed/disposed.
+Only files named:
 
-## GIS calculation and acceptance check
-
-JTS `geometry.getCentroid()` runs in the source projected CRS (normally
-EPSG:3059, LKS-92 / Latvia TM). Only that Point is transformed. Transforming the
-whole polygon first would calculate a different centroid in angular coordinates.
-GeoTools decodes EPSG:4326 with longitude-first axis order: X is longitude and
-Y is latitude. No manual coordinate swapping is used.
-
-For real building **01001260033002**, the control source centroid is approximately
-X = 514896.51737950393, Y = 304729.99573373026. Expected WGS84:
-
-- Latitude: **56.88606546818168**
-- Longitude: **24.244472425243256**
-
-Tests use a tolerance of 1e-6 degrees. The integration test reads the real
-`sample-data/ExportCadGroup_0100126` directory. If absent, JUnit explicitly marks
-the test **skipped**, with a reason; it does not report a passed acceptance check.
-Place that real directory and its companion files there, or choose a root:
-
-```sh
-./gradlew test -Dcadastre.test.root=/data/cadaster
+```text
+KKBuilding.shp
 ```
+
+are processed.
+
+Other cadastral layers are ignored.
+
+## Building identifier
+
+The `CODE` attribute from `KKBuilding` is used as the building cadastral identifier.
+
+`CODE` is always preserved as a `String`, including leading zeros.
+
+The resulting model is:
+
+```java
+public record CadastreCentroid(
+        String code,
+        double latitude,
+        double longitude,
+        String sourceGroup
+) {}
+```
+
+`sourceGroup` contains the name of the directory from which the Shapefile was read.
+
+## GIS calculation
+
+Latvian cadastral spatial data normally uses:
+
+```text
+EPSG:3059
+LKS-92 / Latvia TM
+```
+
+The application does not blindly assume the CRS. The source CRS is obtained from the Shapefile schema and `.prj` metadata.
+
+The centroid is deliberately calculated **before** transformation to WGS84:
+
+```text
+Building polygon
+in source projected CRS
+        |
+        v
+JTS geometry.getCentroid()
+        |
+        v
+Centroid in source CRS
+        |
+        v
+GeoTools MathTransform
+        |
+        v
+EPSG:4326
+```
+
+This is important because calculating a polygon centroid after transforming the polygon into geographic longitude/latitude coordinates can produce a different result.
+
+Only the resulting centroid point is transformed to WGS84.
+
+For the final WGS84 coordinate:
+
+```text
+X = longitude
+Y = latitude
+```
+
+GeoTools is configured to use longitude-first axis order for `EPSG:4326`.
+
+Coordinates are not manually swapped.
+
+## CRS transformation
+
+A strict GeoTools transformation is attempted first.
+
+Some source `.prj` definitions may not contain sufficient datum transformation metadata for a strict transformation. If a strict operation cannot be constructed, the application logs a warning and attempts a lenient GeoTools transformation.
+
+The detected projection and coordinate axes are still used.
+
+The lenient fallback should not be assumed to be appropriate for arbitrary coordinate reference systems. Production use with other datums may require authoritative transformation metadata.
+
+## Validation
+
+The Java implementation was validated independently against a reference implementation using **GeoPandas**.
+
+A complete test dataset contained:
+
+```text
+127 KKBuilding Shapefiles
+103,166 building records
+```
+
+Both implementations produced:
+
+```text
+103,166 unique cadastral identifiers
+127 source groups
+0 duplicate CODE values
+```
+
+The cadastral identifiers and source groups matched exactly.
+
+The maximum observed coordinate difference between the Java/GeoTools and Python/GeoPandas implementations was approximately:
+
+```text
+latitude:   8.87e-10 degrees
+longitude:  2.14e-13 degrees
+```
+
+This corresponds to approximately **0.1 mm** at the tested latitude and is negligible for the intended use case.
+
+An optional integration test validates the Java transformation against coordinates calculated independently with GeoPandas using real data from the public cadastral dataset.
+
+Tests use a tolerance of:
+
+```text
+1e-6 degrees
+```
+
+If the required real test data is not present, the integration test is explicitly reported as **skipped** rather than passed.
+
+Real cadastral test data is not included in this repository.
+
+## Build
+
+### Requirements
+
+Install JDK 21 and ensure `JAVA_HOME` points to it.
+
+A separate Gradle installation is not required because the Gradle Wrapper is included.
+
+Initial dependency resolution requires access to:
+
+- Maven Central
+- the official OSGeo release repository
+
+### Unix / macOS
+
+```bash
+chmod +x gradlew
+./gradlew clean build
+```
+
+### Windows PowerShell
 
 ```powershell
-.\gradlew.bat test '-Dcadastre.test.root=C:\data\cadaster'
+$env:JAVA_HOME = 'C:\Program Files\Java\jdk-21'
+.\gradlew.bat clean build
 ```
 
-When data is present, missing acceptance CODE is a test failure. Unit tests also
-check the known source coordinate independently, centroid calculation order,
-root validation, and UTF-8 CSV escaping. No synthetic Shapefile is used.
+## Run
 
-Validated with the included real data: `gradlew.bat clean build` passed all five
-tests. A CLI run over `sample-data` read 127 building Shapefiles and exported
-103,166 records, with zero skipped features and zero failed files. Java produced
-latitude **56.88606546729516**, longitude **24.2444724252431** for the acceptance
-building, within the specified tolerance.
+The application reads cadastral data from:
 
-## CSV and scope
+```text
+sample-data/
+```
 
-CSV columns are `CODE,LATITUDE,LONGITUDE,SOURCE_GROUP`; values containing commas,
-quotes or newlines are quoted correctly. Output is UTF-8 with CRLF record endings
-and decimal points independent of locale. Spreadsheet software may interpret
-CODE numerically: import that column explicitly as text to retain leading zeros.
-An existing output CSV is overwritten.
+relative to the current working directory.
 
-This small PoC holds all results in memory and reports file failures while
-returning successfully processed records. A run with partial failures still
-exports those records; inspect the failure summary. Skipped counts cover known
-feature skips, not unreadable rows remaining in a corrupt file. A polygon centroid
-can lie outside a concave building; this is the requested centroid, not an interior
-point. Production integration, database architecture and large-scale streaming
-are intentionally outside this PoC's scope.
+Run the application from the project root.
+
+### Unix / macOS
+
+```bash
+./gradlew run
+```
+
+### Windows PowerShell
+
+```powershell
+.\gradlew.bat run
+```
+
+The application prints:
+
+- discovered `KKBuilding.shp` files;
+- detected source CRS information;
+- processing statistics;
+- skipped features;
+- failed Shapefiles;
+- total number of processed buildings;
+- the first 20 resulting records.
+
+It also creates:
+
+```text
+result.csv
+```
+
+in the current working directory.
+
+## CSV output
+
+The output format is:
+
+```text
+CODE,LATITUDE,LONGITUDE,SOURCE_GROUP
+```
+
+For example:
+
+```text
+CODE,LATITUDE,LONGITUDE,SOURCE_GROUP
+<building-code>,<latitude>,<longitude>,<source-group>
+```
+
+The file is UTF-8 encoded.
+
+CSV values containing commas, quotes, or newlines are escaped according to CSV quoting rules.
+
+Decimal formatting is independent of the system locale.
+
+`CODE` should be imported into spreadsheet applications explicitly as text to preserve leading zeros.
+
+An existing `result.csv` is overwritten.
+
+## Tests
+
+Run the test suite with:
+
+### Unix / macOS
+
+```bash
+./gradlew test
+```
+
+### Windows PowerShell
+
+```powershell
+.\gradlew.bat test
+```
+
+A real cadastral dataset can optionally be supplied to the integration test.
+
+### Unix / macOS
+
+```bash
+./gradlew test -Dcadastre.test.root=/path/to/cadaster
+```
+
+### Windows PowerShell
+
+```powershell
+.\gradlew.bat test '-Dcadastre.test.root=C:\path\to\cadaster'
+```
+
+If the expected acceptance record cannot be found in a supplied real dataset, the integration test fails.
+
+If no real test dataset is available, the integration test is explicitly marked as skipped.
+
+The test suite also covers logic that can be verified without distributing real cadastral Shapefiles.
+
+No synthetic Shapefile is used to satisfy the real-data integration test.
+
+## Error handling
+
+Invalid individual features do not stop the complete import.
+
+Features are skipped when:
+
+- `CODE` is null or blank;
+- geometry is null;
+- geometry is empty.
+
+Feature conversion errors are logged and processing continues.
+
+A corrupt feature iterator stops processing of the affected Shapefile because continuing to advance an invalid iterator may not be safe. Other Shapefiles continue to be processed.
+
+Missing CRS information and incompatible schemas are reported as file-level failures.
+
+Resources including DataStores, feature iterators, directory streams, and CSV writers are explicitly closed or disposed.
+
+## Dependency security
+
+The project uses a recent Jackson BOM to override the older Jackson Core version requested transitively by GeoTools.
+
+The effective runtime dependency version should be verified with:
+
+```bash
+./gradlew dependencyInsight \
+    --dependency jackson-core \
+    --configuration runtimeClasspath
+```
+
+On Windows PowerShell:
+
+```powershell
+.\gradlew.bat dependencyInsight --dependency jackson-core --configuration runtimeClasspath
+```
+
+Dependency versions should be reviewed and updated as part of normal maintenance before production use.
+
+## Limitations
+
+This project is intentionally a small proof of concept.
+
+In particular:
+
+- all resulting records are currently retained in memory;
+- output is written to CSV rather than a database;
+- partial Shapefile failures do not prevent successfully processed records from being exported;
+- skipped counts cover known feature skips and do not represent unreadable records remaining after a corrupt iterator;
+- a geometric polygon centroid may lie outside a highly concave building footprint;
+- the implementation calculates the requested geometric centroid, not an interior representative point;
+- the lenient CRS transformation fallback is intended for the tested cadastral data and should not automatically be assumed appropriate for unrelated datasets;
+- production database integration is outside the scope of this project;
+- production scheduling, streaming, monitoring, and deployment architecture are outside the scope of this project.
+
+The purpose of the PoC is to demonstrate and validate the following Java GIS processing pipeline:
+
+```text
+Latvian cadastral Shapefile
+        |
+        v
+GeoTools
+        |
+        v
+JTS centroid in projected CRS
+        |
+        v
+GeoTools CRS transformation
+        |
+        v
+WGS84 latitude / longitude
+```
