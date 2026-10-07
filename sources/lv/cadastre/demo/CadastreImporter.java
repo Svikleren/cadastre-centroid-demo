@@ -17,6 +17,12 @@ import org.locationtech.jts.geom.Point;
 import org.locationtech.jts.geom.Polygonal;
 
 public class CadastreImporter {
+    public List<CadastreCentroid> importInput(Path input) throws IOException {
+        try (var prepared = CadastreInput.prepare(input)) {
+            return importFiles(prepared.shapefiles());
+        }
+    }
+
     public List<CadastreCentroid> importDirectory(Path root) throws IOException {
         if (!Files.isDirectory(root)) {
             throw new IllegalArgumentException("Cadastral root must be an existing directory: " + root);
@@ -27,6 +33,10 @@ public class CadastreImporter {
                     .filter(p -> p.getFileName().toString().equalsIgnoreCase("KKBuilding.shp"))
                     .sorted().toList();
         }
+        return importFiles(files);
+    }
+
+    private List<CadastreCentroid> importFiles(List<Path> files) {
         System.out.println("Found " + files.size() + " KKBuilding shapefiles");
         var results = new ArrayList<CadastreCentroid>();
         long totalSkipped = 0;
@@ -40,7 +50,7 @@ public class CadastreImporter {
                 store = new ShapefileDataStore(file.toUri().toURL());
                 var source = store.getFeatureSource();
                 var crs = source.getSchema().getCoordinateReferenceSystem();
-                if (crs == null) throw new IllegalArgumentException("Missing source CRS (.prj required)");
+                if (crs == null) crs = ShapefileCrs.readProjection(file);
                 System.out.println("Source CRS: " + CRS.toSRS(crs) + " / " + crs.getName());
                 if (!(crs instanceof ProjectedCRS)) {
                     throw new IllegalArgumentException("Source CRS must be projected for polygon centroid calculation");

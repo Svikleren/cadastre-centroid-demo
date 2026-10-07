@@ -3,6 +3,7 @@ out/
 !**/src/main/**/out/
 !**/src/test/**/out/
 .kotlin
+.idea/
 
 ### Eclipse ###
 .apt_generated
@@ -32,4 +33,10 @@ bin/
 .gradle/
 build/
 .tools/
+
+# Local cadastral data
+sample-data/
+
+# Generated output
 result.csv
+duplicate_codes.csv

@@ -9,7 +9,7 @@ public class CadastreApplication {
     public static void main(String[] args) {
         try {
             System.out.println("Cadastral directory: " + CADASTRAL_ROOT.toAbsolutePath());
-            var records = new CadastreImporter().importDirectory(CADASTRAL_ROOT);
+            var records = new CadastreImporter().importInput(CADASTRAL_ROOT);
             System.out.println("Buildings returned: " + records.size());
             records.stream().limit(20).forEach(System.out::println);
             new CsvExporter().export(CSV_OUTPUT, records);
